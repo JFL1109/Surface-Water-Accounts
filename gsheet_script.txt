@@ -1,0 +1,331 @@
+function importGeoJsonData() {
+  //const url = "https://gis.boprc.govt.nz/server2/rest/services/BayOfPlentyMaps/ConsentsandCompliance/MapServer/45/query?outFields=*&where=1%3D1&f=geojson";
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("api_Consents"); // Change "Sheet1" to your sheet name if different
+  const customWhereClause = "SubType = 'Water Take' AND Category = 'Surface' AND Status = 'Current'";
+  const encodedWhereClause = encodeURIComponent(customWhereClause);
+  const url = `https://gis.boprc.govt.nz/server2/rest/services/BayOfPlentyMaps/ConsentsandCompliance/MapServer/45/query?outFields=*&f=geojson&where=${encodedWhereClause}`
+  if (!sheet) {
+    SpreadsheetApp.getUi().alert("Error: Sheet not found. Please ensure a sheet named 'api_Consents' (or your chosen name) exists.");
+    return;
+  }
+
+  try {
+    const response = UrlFetchApp.fetch(url);
+    const jsonString = response.getContentText();
+    const geojsonData = JSON.parse(jsonString);
+
+    if (!geojsonData || !geojsonData.features || geojsonData.features.length === 0) {
+      Logger.log("No features found in GeoJSON data.");
+      return;
+    }
+
+    // Get headers (properties from the first feature)
+    const headers = Object.keys(geojsonData.features[0].properties);
+    const data = [headers]; // Initialize data with headers
+    const subtypeIdx = data[0].indexOf('Subtype')
+    const categoryIdx = data[0].indexOf('Category')
+    const statusIdx = data[0].indexOf('Status')
+    var counter = 0
+
+    // Extract data from each feature's properties
+    geojsonData.features.forEach(feature => {
+      const row = headers.map(header => {
+        let value = feature.properties[header];
+        // Handle potential date fields if they are Unix timestamps (common in ArcGIS REST)
+        if (typeof value === 'number' && String(value).length === 13 && new Date(value).getFullYear() > 1900) { // Simple check for potential timestamps
+          return new Date(value);
+        }
+        return value;
+      });
+
+     // counter++
+     // console.log(counter)
+
+      if ((row[subtypeIdx] === 'Water Take'))// && row[categoryIdx] === 'Surface')// && row[statusIdx] === 'Current')
+        { data.push(row);}
+       else
+        {row == null;}
+    });
+
+    // Clear existing data and write new data to the sheet
+    sheet.clearContents(); // Optional: clears existing data before writing
+    sheet.getRange(1, 1, data.length, data[0].length).setValues(data);
+
+    Logger.log("Data successfully imported from GeoJSON.");
+
+  } catch (e) {
+    Logger.log("Error importing data: " + e.toString());
+    SpreadsheetApp.getUi().alert("Error importing data: " + e.toString() + ". Check the Apps Script logs for details.");
+  }
+}
+
+function highlight_apiConsent_gis_Consent_diffs() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const api_Consent_Sheet = spreadsheet.getSheetByName("api_Consents"); // Adjust sheet name if different
+  const gis_ConsentWaterTakeJoin_Sheet = spreadsheet.getSheetByName("gis_ConsentWaterTakeJoin"); // Adjust sheet name if different
+
+  if (!api_Consent_Sheet || !gis_ConsentWaterTakeJoin_Sheet) {
+    SpreadsheetApp.getUi().alert("Error: Make sure 'api_Consents' and 'gis_ConsentWaterTakeJoin' exist.");
+    return;
+  }
+
+  const api_Consents_idColumn = 8;
+  //const idColumnIndex = 4; // Assuming ConsentID is in Column A (index 1)
+  const gis_ConsentWaterTakeJoin_idColumn = 4;
+
+  // --- Get all ConsentIDs from both sheets ---
+  const api_data = api_Consent_Sheet.getDataRange().getValues();
+  const gis_data = gis_ConsentWaterTakeJoin_Sheet.getDataRange().getValues();
+
+  // Extract ConsentIDs, skipping header row (assuming row 1 is header)
+  const api_IDs = api_data.slice(1).map(row => row[api_Consents_idColumn - 1]).filter(id => id !== "");
+  const gis_IDs = gis_data.slice(1).map(row => row[gis_ConsentWaterTakeJoin_idColumn - 1]).filter(id => id !== "");
+
+  //console.log(api_IDs)
+  //console.log(gis_IDs)
+
+  const api_IDSet = new Set(api_IDs); //convert to a set to use the 'has' (set) functionality - note this is a bit memory hungry
+  const gis_IDSet = new Set(gis_IDs);
+
+  // --- Reset previous highlighting (optional but recommended) ---
+  resetHighlighting(api_Consent_Sheet, api_Consents_idColumn);
+  resetHighlighting(gis_ConsentWaterTakeJoin_Sheet, gis_ConsentWaterTakeJoin_idColumn);
+
+  // --- Highlight rows in gis_ConsentWaterTakeJoin_Sheet not in api_Consent_Sheet ---
+  let highlightedCountSheet1 = 0;
+  for (let i = 1; i < gis_data.length; i++) { // Start from 1 to skip header
+    const consentID = gis_data[i][gis_ConsentWaterTakeJoin_idColumn - 1];
+    if (consentID && !api_IDSet.has(consentID)) {
+      gis_ConsentWaterTakeJoin_Sheet.getRange(i + 1, 1, 1, api_data[0].length).setBackground("#FFD700"); // Gold color
+      highlightedCountSheet1++;
+    }
+  }
+  Logger.log(`Highlighted ${highlightedCountSheet1} rows in gis_ConsentWaterTakeJoinSheet not found in the live api_Consent_Sheet.`);
+
+
+  // --- Append IDs from Sheet2 not in Sheet1 to Sheet1 ---
+  const idsToAppend = [];
+  for (const id of api_IDs) {
+    if (!gis_IDSet.has(id)) {
+      idsToAppend.push([id]); // Push as an array of array for setValues
+    }
+  }
+
+  if (idsToAppend.length > 0) {
+    const lastRowgisSheet = gis_ConsentWaterTakeJoin_Sheet.getLastRow();
+    gis_ConsentWaterTakeJoin_Sheet.getRange(lastRowgisSheet + 1, gis_ConsentWaterTakeJoin_idColumn, idsToAppend.length, 1).setValues(idsToAppend);
+    Logger.log(`Appended ${idsToAppend.length} unique IDs from api_Consent_Sheet to gis_ConsentWaterTakeJoin_Sheet.`);
+  } else {
+    Logger.log("No new unique IDs from Sheet2 to append to Sheet1.");
+  }
+
+  SpreadsheetApp.getUi().alert("Comparison and Appending Complete!",
+                               SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+/**
+ * Resets the background color of the specified column to no fill.
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet The sheet to reset.
+ * @param {number} colIndex The 1-based index of the column to reset.
+ */
+function resetHighlighting(sheet, colIndex) {
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow > 1) { // Only reset if there's data beyond the header
+    // Reset the background of the entire used range to clear previous highlights
+    sheet.getRange(2, 1, lastRow - 1, lastColumn).setBackground(null);
+  }
+}
+
+function appendRowsByConsentID(consentId, sourceSheetName, destinationSheetName, consentIdColumnIndex) {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+
+  // Get the source sheet
+  const sourceSheet = spreadsheet.getSheetByName(sourceSheetName);
+  if (!sourceSheet) {
+    Logger.log(`Error: Source sheet '${sourceSheetName}' not found.`);
+    SpreadsheetApp.getUi().alert(`Error: Source sheet '${sourceSheetName}' not found. Please check the sheet name.`);
+    return;
+  }
+
+  // Get the destination sheet
+  const destinationSheet = spreadsheet.getSheetByName(destinationSheetName);
+  if (!destinationSheet) {
+    Logger.log(`Error: Destination sheet '${destinationSheetName}' not found.`);
+    SpreadsheetApp.getUi().alert(`Error: Destination sheet '${destinationSheetName}' not found. Please check the sheet name.`);
+    return;
+  }
+
+  // Get all data from the source sheet
+  // Using getDataRange() and getValues() is efficient as it reads all data into memory at once.
+  const sourceData = sourceSheet.getDataRange().getValues();
+
+  // Array to store rows that match the consent ID
+  const rowsToAppend = [];
+
+  // Assuming the first row is a header, start from the second row (index 1)
+  // Adjust 'consentIdColumnIndex' to be 0-based for array access.
+  const actualConsentIdColIndex = consentIdColumnIndex - 1;
+
+  if (sourceData.length > 0) {
+    // Iterate through each row in the source data
+    for (let i = 0; i < sourceData.length; i++) {
+      const row = sourceData[i];
+
+      // Ensure the column exists in the current row before trying to access it
+      if (row.length > actualConsentIdColIndex) {
+        const currentConsentId = row[actualConsentIdColIndex];
+
+        // Check if the consent ID matches (case-insensitive for robustness)
+        if (currentConsentId && String(currentConsentId).trim().toLowerCase() === String(consentId).trim().toLowerCase()) {
+          rowsToAppend.push(row);
+        }
+      }
+    }
+  } else {
+    Logger.log('Source sheet is empty. No data to process.');
+    SpreadsheetApp.getUi().alert('Source sheet is empty. No data to process.');
+    return;
+  }
+
+  // If there are matching rows, append them to the destination sheet
+  if (rowsToAppend.length > 0) {
+    destinationSheet.getRange(destinationSheet.getLastRow() + 1, 1, rowsToAppend.length, rowsToAppend[0].length).setValues(rowsToAppend);
+    Logger.log(`${rowsToAppend.length} row(s) with consent ID '${consentId}' appended to '${destinationSheetName}'.`);
+    SpreadsheetApp.getUi().alert(`${rowsToAppend.length} row(s) with consent ID '${consentId}' appended to '${destinationSheetName}'.`);
+  } else {
+    Logger.log(`No rows found with consent ID '${consentId}' in '${sourceSheetName}'.`);
+    SpreadsheetApp.getUi().alert(`No rows found with consent ID '${consentId}' in '${sourceSheetName}'.`);
+  }
+}
+
+
+/**
+ * @customfunction
+ * Traverses a tree structure represented by parent-child relationships
+ * and returns the starting ID and all its sub-branch IDs (descendants).
+ *
+ * This function is designed to be used as a custom function in Google Sheets.
+ *
+ * @param {Array<Array<number>>} data A 2D array where each inner array is [ID, Nextdown_ID],
+ * representing a parent-child relationship.
+ * ID is the child, Nextdown_ID is the parent.
+ * Example: [[22, 33], [78, 22], [989, 22]]
+ * @param {number} startId The ID of the branch from which to start the traversal.
+ * @return {Array<Array<number>>} A 2D array (column) containing the start_id and all its
+ * sub-branch IDs. Returns an empty array if start_id
+ * is not found in the tree.
+ */
+function GET_ALL_SUB_BRANCHES(data, startId) {
+  // Ensure data is treated as an array of arrays, and startId as a number.
+  // Google Sheets typically passes ranges as 2D arrays.
+  if (!Array.isArray(data) || !data.every(row => Array.isArray(row) && row.length === 2)) {
+    throw new Error("Input 'data' must be a 2D array where each row contains [ID, Nextdown_ID].");
+  }
+  if (typeof startId !== 'number') {
+    throw new Error("Input 'startId' must be a number.");
+  }
+
+  // Build an adjacency list (parent -> list of children)
+  // We want to efficiently find children of a given parent.
+  // The input format is [child_ID, parent_ID]
+  // Using a Map for adj_list provides better performance and key flexibility than a plain object.
+  const adjList = new Map();
+  for (let i = 0; i < data.length; i++) {
+    const childId = data[i][0];
+    const parentId = data[i][1];
+
+    if (!adjList.has(parentId)) {
+    adjList.set(parentId, []);
+    }
+    adjList.get(parentId).push(childId);
+  }
+
+  // List to store all discovered branch IDs, including the starting one
+  // This will be returned as a 2D array suitable for Google Sheets (a single column).
+  const discoveredBranches = [];
+
+  // Use a stack for iterative Depth-First Search (DFS)
+  // Start with the initial ID
+  const stack = [startId];
+
+  // Keep track of visited nodes to avoid infinite loops in case of cycles
+  // and to ensure each node is added only once.
+  const visited = new Set();
+
+  while (stack.length > 0) {
+    const currentBranch = stack.pop(); // Get the next branch to process
+
+    if (!visited.has(currentBranch)) {
+    visited.add(currentBranch);
+    discoveredBranches.push([currentBranch]); // Push as a single-element array for Sheets column format
+
+    // Add children of the current branch to the stack
+    // Children are found by looking up current_branch in the adjList
+    if (adjList.has(currentBranch)) {
+      for (const child of adjList.get(currentBranch)) {
+      if (!visited.has(child)) { // Only add unvisited children
+        stack.push(child);
+      }
+      }
+    }
+  }
+}
+
+// Google Sheets custom functions typically expect a 2D array return for spilling results
+// into multiple cells (even if it's just a single column).
+// The sorting is optional, but often useful for consistent output.
+// discoveredBranches.sort((a, b) => a[0] - b[0]); // Uncomment to sort numerically
+return discoveredBranches;
+}
+
+/** @customfunction
+ * 
+ * 
+ * Uses the get_all_subbranches routine to return all subbranches on the Rec network
+ * from this one. Returns those as an array. Then check the existeance of any one of those 
+ * in a seccond array.
+ * The function returns a list of all common items (HydroIDs)
+ * 
+ */
+
+function GET_SUB_BRANCHES_CONTAINING(data, checkagainstdata, startId) {
+  const sub_branches = GET_ALL_SUB_BRANCHES(data,startId); // this branch and further up the river network than this one. 
+  
+  const checkset = new Set(); //a set for set functions. We will use this to check if the other checkinset are in this list.
+  sub_branches.forEach(row => {
+    row.forEach(
+      item=>{if (item) checkset.add(item);}
+      )
+    });
+
+  flatcheckagainstdata = []; // a simple list
+
+  checkagainstdata.forEach(row => {
+    row.forEach(
+      item=>{if (item) flatcheckagainstdata.push(item);}
+      )
+    });
+
+  if (flatcheckagainstdata)
+    commonItems = flatcheckagainstdata.filter(item=>checkset.has(item));
+
+  if(commonItems.length > 0)
+    return commonItems
+  else
+    return '';
+}
+
+   function buttonclicked(){
+     
+    var file = DriveApp.getFileById('1nEl0oJoxu3hCzFdfPmizlLmWujnCDQ00');
+    var htmlContent = file.getBlob().getDataAsString();
+
+
+    var htmlOutput = HtmlService.createHtmlOutput(htmlContent)
+        .setWidth(800)
+        .setHeight(600);
+
+       SpreadsheetApp.getUi().showModalDialog(htmlOutput, 'Select your take location');
+
+   }
