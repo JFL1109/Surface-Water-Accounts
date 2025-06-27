@@ -1,0 +1,90 @@
+<title>Leaflet.js Guide</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Get the leaflet CSS file -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.6.0/dist/leaflet.css" integrity="sha512-xwE/Az9zrjBIphAcBb3F6JVqxf46+CDLwfLMHloNu6KEQCAWi6HcDUbeOfBIptF7tcCzusKFjFw2yuvEpDL9wQ==" crossorigin="">
+<h1>BOP Surfacewater Consents Viewer</h1>
+<!-- Specify the map and it's dimensions -->
+<div id="map" style="width: 960px; height: 500px"></div>
+<!-- Get the leaflet JavaScript file -->
+<script src="https://unpkg.com/leaflet@1.6.0/dist/leaflet.js" integrity="sha512-gZwIG9x3wUXg2hdXF6+rVkLF/0Vi9U8D2Ntg4Ga5I5BZpVkVxlJWbSQtXPSiUTtC0TjtGOmxa1AJPuV0CPthew==" crossorigin=""></script>
+<script>// Initialize the map
+        const GOOGLE_SHEETS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwFkIOLOe4B7cznbT5t2Qbg5OxlkDaD2hajdkX4zCMdume6Nup50MEararADDyg3aDy/exec'; // <-- REPLACE THIS
+	const GEOJSON_DATA_URL = 'https://gist.githubusercontent.com/JFL1109/62585abe7d682fce5965773b3eec5028/raw/9446e8701d9d612ba9f51819f70d98b16357405e/Rec.geojson' 
+	//const GEOJSON_DATA_URL = 'https://drive.usercontent.google.com/download?id=1zP1xmZ5s7BdNZCVKr9Q_5nkMoGu1Mm9A'
+//'https://gist.githubusercontent.com/JFL1109/62585abe7d682fce5965773b3eec5028/raw/9446e8701d9d612ba9f51819f70d98b16357405e/Rec.geojson'; // <-- REPLACE THIS
+        const ATTRIBUTE_TO_RETURN = 'HydroID'; // <-- REPLACE THIS (e.g., 'pipe_id', 'road_name')
+    const map = L.map('map')
+    // Get the tile layer from OpenStreetMaps
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    // Specify the maximum zoom of the map
+    maxZoom: 19,
+    // Set the attribution for OpenStreetMaps
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    // Set the view of the map
+    // with the latitude, longitude and the zoom value
+    map.setView([-37.6833, 176.1667], 16);
+    // Set the map view to the user's location
+    // Uncomment below to set map according to user location
+    // map.locate({setView: true, maxZoom: 16});
+    // Show a market at the position of the Eiffel Tower
+    //let eiffelMarker = L.marker([48.8584, 2.2945]).addTo(map);
+    // Bind popup to the marker with a popup
+    //eiffelMarker.bindPopup("Eiffel Tower").openPopup();
+        // Path to your GeoJSON file
+        //var geojsonFilePath = 'RecLayerMid.geojson'; 
+        // If your file is in a subfolder, e.g., 'data/my_lines.geojson'
+        // var geojsonFilePath = 'data/my_lines.geojson';
+        fetch(GEOJSON_DATA_URL)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json(); // Parse the JSON data
+            })
+            .then(data => {
+                // Now 'data' contains your GeoJSON object
+                L.geoJSON(data, {
+                    style: function(feature) {
+                        return {
+                            color: feature.properties.color || '#3388ff', // Use color from properties or default blue
+                            weight: 3,
+                            opacity: 0.7
+                        };
+                    },
+                    onEachFeature: function(feature, layer) {
+                        if (feature.properties && feature.properties[ATTRIBUTE_TO_RETURN]) {
+                            layer.bindPopup("Clicked ID: " + feature.properties[ATTRIBUTE_TO_RETURN]);
+                        }
+                        // Add click event listener to each line
+                        layer.on('click', function(e) {
+                            if (feature.properties && feature.properties[ATTRIBUTE_TO_RETURN]) {
+                                const valueToReturn = feature.properties[ATTRIBUTE_TO_RETURN];
+                                console.log('Line clicked! Value:', valueToReturn);
+                                // Call Google Apps Script Web App
+                                const fetchUrl = `${GOOGLE_SHEETS_WEB_APP_URL}?value=${encodeURIComponent(valueToReturn)}`;
+                                fetch(fetchUrl)
+                                    .then(response => response.text())
+                                    .then(result => {
+                                        console.log('Google Apps Script response:', result);
+                                        alert('Value sent to Google Sheet: ' + valueToReturn); // User feedback
+                                    })
+                                    .catch(error => {
+                                        console.error('Error sending value to Google Sheet:', error);
+                                        alert('Failed to send value to Google Sheet. Check console for details.');
+                                    });
+                            } else {
+                                console.log('Clicked line has no defined value for ' + ATTRIBUTE_TO_RETURN);
+                            }
+                        });
+                    }
+                }).addTo(map);
+                // Optional: Fit the map bounds to the loaded GeoJSON layer
+                // If you have a single GeoJSON layer, you can use:
+                // var geoJsonLayer = L.geoJSON(data, ...).addTo(map);
+                // map.fitBounds(geoJsonLayer.getBounds());
+            })
+            .catch(error => {
+                console.error('Error loading the GeoJSON file:', error);
+            });</script>
